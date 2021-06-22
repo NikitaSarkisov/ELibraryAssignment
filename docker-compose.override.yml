@@ -4,6 +4,7 @@ services:
   elibrary:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
       - DATABASE__CONNECTIONSTRING=mongodb://user:pass123@db
     ports:
       - "80:80"

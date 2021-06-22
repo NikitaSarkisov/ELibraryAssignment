@@ -8,7 +8,6 @@ using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Security.Claims;
-using System.Text;
 
 namespace ELibrary.Services
 {
@@ -20,16 +19,15 @@ namespace ELibrary.Services
     }
     public class UserService : IUserService
     {
-        private readonly AuthSettings authSettings;
-
         private readonly IMongoCollection<User> users;
-        private readonly byte[] key;
+        private readonly JwtKey jwtKey;
 
-        public UserService(IOptions<AuthSettings> authSettings, IOptions<DbSettings> dbSettings)
+        private const int AccessLifetime = 60; // 1 min
+        private const int RefreshLifetime = 3600; // 1 hour
+
+        public UserService(IOptions<DbSettings> dbSettings, JwtKey jwtKey)
         {
-            this.authSettings = authSettings.Value;
-
-            key = Encoding.UTF8.GetBytes(this.authSettings.Secret);
+            this.jwtKey = jwtKey;
 
             var client = new MongoClient(dbSettings.Value.ConnectionString);
             var db = client.GetDatabase(dbSettings.Value.DatabaseName);
@@ -85,7 +83,7 @@ namespace ELibrary.Services
         private string[] generateTokens(User user)
         {
             ;
-            var cred = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256);
+            var cred = new SigningCredentials(new SymmetricSecurityKey(jwtKey.Key), SecurityAlgorithms.HmacSha256);
             var handler = new JwtSecurityTokenHandler();
 
             var access_claims = new List<Claim>()
@@ -101,10 +99,12 @@ namespace ELibrary.Services
                 new Claim("token_type", "refresh")
             };
 
+
+
             return new string[]
             {
-                handler.WriteToken(new JwtSecurityToken(claims: access_claims, expires: DateTime.Now.AddSeconds(authSettings.AccessLifetime), signingCredentials: cred)),
-                handler.WriteToken(new JwtSecurityToken(claims: refresh_claims, expires: DateTime.Now.AddSeconds(authSettings.RefreshLifetime), signingCredentials: cred))
+                handler.WriteToken(new JwtSecurityToken(claims: access_claims, expires: DateTime.Now.AddSeconds(AccessLifetime), signingCredentials: cred)),
+                handler.WriteToken(new JwtSecurityToken(claims: refresh_claims, expires: DateTime.Now.AddSeconds(RefreshLifetime), signingCredentials: cred))
             };
         }
         private string validateRefreshToken(string token)
@@ -118,7 +118,7 @@ namespace ELibrary.Services
                     ValidateAudience = false,
                     ValidateIssuer = false,
                     ClockSkew = TimeSpan.Zero,
-                    IssuerSigningKey = new SymmetricSecurityKey(key)
+                    IssuerSigningKey = new SymmetricSecurityKey(jwtKey.Key)
                 }, out _);
             }
             catch (SecurityTokenException)

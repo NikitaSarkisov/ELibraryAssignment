@@ -15,11 +15,10 @@ namespace ELibrary.Services
 {
     public interface IBookService
     {
-        Task<Book> Create(BookCreateUpdateDto book, string ownerId, Stream stream);
-        Task<Book> Update(string bookId, BookCreateUpdateDto book, string ownerId);
+        Task<Book> Create(string ownerId, BookCreateUpdateDto book, Stream stream);
+        Task<Book> Update(string bookId, string ownerId, BookCreateUpdateDto book, Stream stream);
         Task<IEnumerable<Book>> GetAllPublic();
-        Task<Book> GetById(string bookId, string ownerId);
-        Task<IEnumerable<Book>> GetAllByOwnerId(string ownerId);
+        Task<IEnumerable<Book>> GetByOwner(string ownerId);
         Task<Stream> Download(string bookId, string ownerId);
         Task<bool> Delete(string bookId, string ownerId);
     }
@@ -36,7 +35,7 @@ namespace ELibrary.Services
             files = new GridFSBucket(db, new GridFSBucketOptions() { BucketName = "files" });
         }
 
-        public async Task<Book> Create(BookCreateUpdateDto book, string ownerId, Stream stream)
+        public async Task<Book> Create(string ownerId, BookCreateUpdateDto book, Stream stream)
         {
             var filename = Guid.NewGuid().ToString();
             var fileId = await files.UploadFromStreamAsync(filename, stream);
@@ -56,23 +55,37 @@ namespace ELibrary.Services
             return newBook;
         }
 
-        public async Task<Book> Update(string bookId, BookCreateUpdateDto book, string ownerId)
+        public async Task<Book> Update(string bookId, string ownerId, BookCreateUpdateDto book, Stream stream)
         {
-            var tags = book.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries).Distinct().Select(t => t.Trim()).ToArray();
-            var updateSet = Builders<Book>.Update
-                .Set(b => b.Title, book.Title)
-                .Set(b => b.Author, book.Author)
-                .Set(b => b.Tags, tags)
-                .Set(b => b.Private, book.Private);
-            var options = new FindOneAndUpdateOptions<Book, Book>() { ReturnDocument = ReturnDocument.After };
             try
             {
-                return await books.FindOneAndUpdateAsync<Book>(b => b.Id == bookId && b.OwnerId == ownerId, updateSet, options);
+                // Find book
+                Book bookToUpdate = await books.Find(b => b.OwnerId == ownerId && b.Id == bookId).FirstOrDefaultAsync();
+                if (bookToUpdate == null) { return null; }
+
+                // Delete file
+                await files.DeleteAsync(ObjectId.Parse(bookToUpdate.FileId));
+
+                // Upload new file
+                var filename = Guid.NewGuid().ToString();
+                var fileId = await files.UploadFromStreamAsync(filename, stream);
+
+                // Set new values to book object
+                var tags = book.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries).Distinct().Select(t => t.Trim()).ToArray();
+                var updateSet = Builders<Book>.Update
+                    .Set(b => b.Title, book.Title)
+                    .Set(b => b.Author, book.Author)
+                    .Set(b => b.FileId, fileId.ToString())
+                    .Set(b => b.Tags, tags)
+                    .Set(b => b.Private, book.Private);
+                var options = new FindOneAndUpdateOptions<Book, Book>() { ReturnDocument = ReturnDocument.After };
+                bookToUpdate = await books.FindOneAndUpdateAsync<Book>(b => b.Id == bookId, updateSet, options);
+                if (bookToUpdate == null) { return null; }
+
+                return bookToUpdate;
             }
-            catch (FormatException)
-            {
-                return null;
-            }
+            catch (GridFSFileNotFoundException) { return null; }
+            catch (FormatException) { return null; }
         }
 
         public async Task<IEnumerable<Book>> GetAllPublic()
@@ -80,19 +93,7 @@ namespace ELibrary.Services
             return await books.Find(b => !b.Private).ToListAsync();
         }
 
-        public async Task<Book> GetById(string bookId, string ownerId)
-        {
-            try
-            {
-                return await books.Find(b => b.OwnerId == ownerId && b.Id == bookId).FirstOrDefaultAsync();
-            }
-            catch (FormatException)
-            {
-                return null;
-            }
-        }
-
-        public async Task<IEnumerable<Book>> GetAllByOwnerId(string ownerId)
+        public async Task<IEnumerable<Book>> GetByOwner(string ownerId)
         {
             return await books.Find(b => b.OwnerId == ownerId).ToListAsync();
         }

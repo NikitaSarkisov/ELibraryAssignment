@@ -9,7 +9,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System;
-using System.Text;
+using System.Security.Cryptography;
 
 namespace ELibrary
 {
@@ -24,18 +24,37 @@ namespace ELibrary
 
         public void ConfigureServices(IServiceCollection services)
         {
+            services.AddCors(options =>
+            {
+                options.AddPolicy("AllowAll", builder =>
+                {
+                    builder.AllowAnyMethod();
+                    builder.AllowAnyHeader();
+                    builder.AllowAnyOrigin();
+                });
+            });
+
             services.AddControllers();
+
+            services.AddSpaStaticFiles(configuration =>
+            {
+                configuration.RootPath = "ClientApp/build";
+            });
+
             services.AddSwaggerGen(c =>
             {
                 c.SwaggerDoc("v1", new OpenApiInfo { Title = "ELibrary", Version = "v1" });
             });
 
-            services.Configure<AuthSettings>(Configuration.GetSection("Authentication"));
             services.Configure<DbSettings>(Configuration.GetSection("Database"));
 
             // Configure JWT Authentication
-            var settings = Configuration.GetSection("Authentication").Get<AuthSettings>();
-            var key = Encoding.UTF8.GetBytes(settings.Secret);
+            JwtKey jwtKey = new JwtKey();
+            using (var rngCsp = new RNGCryptoServiceProvider())
+            {
+                jwtKey.Key = new byte[64];
+                rngCsp.GetBytes(jwtKey.Key);
+            }
             services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 .AddJwtBearer(opt =>
                 {
@@ -46,12 +65,14 @@ namespace ELibrary
                         ValidateAudience = false,
                         ValidateIssuer = false,
                         ClockSkew = TimeSpan.Zero,
-                        IssuerSigningKey = new SymmetricSecurityKey(key)
+                        IssuerSigningKey = new SymmetricSecurityKey(jwtKey.Key)
                     };
                 });
 
             services.AddSingleton<IUserService, UserService>();
             services.AddSingleton<IBookService, BookService>();
+
+            services.AddSingleton<JwtKey>(jwtKey);
         }
 
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
@@ -63,7 +84,12 @@ namespace ELibrary
                 app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "ELibrary v1"));
             }
 
+            app.UseStaticFiles();
+            app.UseSpaStaticFiles();
+
             app.UseRouting();
+
+            app.UseCors("AllowAll");
 
             app.UseAuthentication();
             app.UseAuthorization();
@@ -71,6 +97,11 @@ namespace ELibrary
             app.UseEndpoints(endpoints =>
             {
                 endpoints.MapControllers();
+            });
+
+            app.UseSpa(spa =>
+            {
+                spa.Options.SourcePath = "ClientApp";
             });
         }
     }

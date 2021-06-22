@@ -39,23 +39,34 @@ namespace ELibrary.Controllers
             }
             catch (JsonException) { return BadRequest(); }
 
+            if (file == null) { return BadRequest(); }
+
             // Create book and upload file to DB
-            var book = await books.Create(bookDto, userId.Value, file.OpenReadStream());
-            return CreatedAtAction(nameof(Get), new { id = book.Id }, book);
+            var book = await books.Create(userId.Value, bookDto, file.OpenReadStream());
+            return StatusCode(201);
         }
 
         [HttpPut("update/{id}")]
-        public async Task<ActionResult<Book>> Update(string id, [FromBody] BookCreateUpdateDto bookDto)
+        public async Task<ActionResult<Book>> Update(string id, [FromForm] string book_info, IFormFile file)
         {
             // Get UserID from Inbound Claims
             var userId = HttpContext.User.Claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Sub);
             if (userId == null) return BadRequest();
 
+            BookCreateUpdateDto bookDto;
+            try
+            {
+                bookDto = JsonSerializer.Deserialize<BookCreateUpdateDto>(book_info, new JsonSerializerOptions() { PropertyNameCaseInsensitive = true });
+            }
+            catch (JsonException) { return BadRequest(); }
+
+            if (file == null) { return BadRequest(); }
+
             // Update book values
-            var book = await books.Update(id, bookDto, userId.Value);
+            var book = await books.Update(id, userId.Value, bookDto, file.OpenReadStream());
             if (book == null) return NotFound();
 
-            return CreatedAtAction(nameof(Get), new { id = book.Id }, book);
+            return StatusCode(201);
         }
 
         [HttpGet("list")]
@@ -75,19 +86,7 @@ namespace ELibrary.Controllers
             var userId = HttpContext.User.Claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Sub);
             if (userId == null) return null;
 
-            return await books.GetAllByOwnerId(userId.Value);
-        }
-
-        [HttpGet("{id}")]
-        public async Task<ActionResult<Book>> Get(string id)
-        {
-            // Get user id from Inbound Claims
-            var userId = HttpContext.User.Claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Sub);
-            if (userId == null) return BadRequest();
-
-            var book = await books.GetById(id, userId.Value);
-            if (book == null) return NotFound();
-            return book;
+            return await books.GetByOwner(userId.Value);
         }
 
         [HttpGet("download/{id}")]
